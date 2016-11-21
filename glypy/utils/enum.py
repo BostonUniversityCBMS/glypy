@@ -1,3 +1,11 @@
+from six import add_metaclass
+try:
+    intern
+except:
+    from sys import intern
+
+debug = False
+
 
 class EnumValue(object):
     '''Represents a wrapper around an value with a name to identify it and
@@ -52,7 +60,7 @@ class EnumValue(object):
                 pass
         raise KeyError("Could not resolve {} against {}".format(self, mapping))
 
-debug = False
+debug = True
 
 
 class EnumMeta(type):
@@ -84,7 +92,7 @@ class EnumMeta(type):
             attrs['__doc__'] = "EnumType"
         enum_type = type.__new__(cls, name, parents, attrs)
         mapped = {}
-        attr_pairs = attrs.items()
+        attr_pairs = list(attrs.items())
         EunmType = attrs.get("__enum_type__", EnumValue)
         for label, value in attr_pairs:
             if not label.startswith("__") or label == "mro":
@@ -95,8 +103,8 @@ class EnumMeta(type):
                     try:
                         mapped[value].add_name(label)
                         setattr(enum_type, label, mapped[value])
-                    except KeyError, e:
-                        print e
+                    except KeyError as e:
+                        print(e)
                 else:
                     mapped[value] = enum_value
                     setattr(enum_type, label, enum_value)
@@ -160,6 +168,9 @@ class EnumMeta(type):
         :class:`EnumValue`
 
         '''
+        # global debug
+        # if debug:
+        #     print "Translating", k
 
         if k in self.__dict__:
             return self.__dict__[k]
@@ -179,12 +190,13 @@ class EnumMeta(type):
     __call__ = translate
 
 
+@add_metaclass(EnumMeta)
 class Enum(object):
     '''
     A simple class implementing :class:`EnumMeta`. Useful base type for other
     enumerated types.
     '''
-    __metaclass__ = EnumMeta
+    # __metaclass__ = EnumMeta
 
     def __init__(self):
         raise Exception("This class is not meant to be instantiated. Reference its attribute members directly")

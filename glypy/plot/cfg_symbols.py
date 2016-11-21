@@ -1,3 +1,8 @@
+'''
+An implementation of a subset of the following symbolic nomenclature:
+    http://www.ncbi.nlm.nih.gov/books/NBK310273/table/symbolnomenclature.T.monosaccharide_symb/?report=objectonly
+'''
+
 import logging
 from functools import partial
 from collections import Counter
@@ -524,7 +529,7 @@ def format_text(text):
     return label
 
 
-def line_to(ax, sx, sy, ex, ey, zorder=1, color='black'):
+def line_to(ax, sx, sy, ex, ey, zorder=1, color='black', lw=1):
     vertices = [
         (sx, sy),
         (ex, ey),
@@ -536,6 +541,6 @@ def line_to(ax, sx, sy, ex, ey, zorder=1, color='black'):
         Path.STOP
     ]
     path = Path(vertices, codes)
-    patch = patches.PathPatch(path)
+    patch = patches.PathPatch(path, color=color, lw=lw, zorder=zorder)
     ax.add_patch(patch)
     return patch

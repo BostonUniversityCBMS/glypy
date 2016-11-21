@@ -1,6 +1,9 @@
 import logging
-from uuid import uuid4
-from itertools import chain, izip_longest
+try:
+    from itertools import chain, izip_longest
+except:
+    from itertools import chain, zip_longest as izip_longest
+from collections import deque
 
 from .constants import Anomer, Configuration, Stem, SuperClass, Modification, RingType
 from .substituent import Substituent
@@ -41,7 +44,7 @@ def _get_standard_composition(monosaccharide):
     :class:`~glypy.composition.composition.Composition`:
         The baseline composition from `monosaccharide.superclass` + `monosaccharide.modifications`
     '''
-    base = monosaccharide_composition[monosaccharide.superclass]
+    base = monosaccharide_composition[monosaccharide.superclass.name]
     modifications = list(monosaccharide.modifications.items())
     for mod_pos, mod_val in modifications:
         # Don't set the reducing end here
@@ -147,7 +150,7 @@ def graph_clone(monosaccharide, visited=None):
     visited = set() if visited is None else visited
     clone_root = monosaccharide.clone(prop_id=True)
     index[clone_root.id] = clone_root
-    node_stack = [(clone_root, monosaccharide)]
+    node_stack = deque([(clone_root, monosaccharide)])
     node_stack_append = node_stack.append
     node_stack_pop = node_stack.pop
     while(llen(node_stack) > 0):
@@ -240,11 +243,12 @@ class Monosaccharide(SaccharideBase):
 
     .. warning::
 
-        While |Monosaccharide| objects expose their :attr:`.modifications`, :attr:`.links`, and :attr:`.substituent_links` attributes as mutable,
-        you should treat them as **read-only**. The methods for altering their contents, :meth:`add_substituent`, :meth:`add_monosaccharide`,
-        :meth:`add_modification`, :meth:`drop_substituent`, :meth:`drop_monosaccharide`, and :meth:`drop_modification` are all responsible
-        for handling these mutations for you. |Link| methods like :meth:`Link.apply`, :meth:`Link.break_link`, and :meth:`Link.reconnect`
-        are used internally.
+        While |Monosaccharide| objects expose their :attr:`.modifications`, :attr:`.links`, and
+        :attr:`.substituent_links` attributes as mutable, you should treat them as **read-only**.
+        The methods for altering their contents, :meth:`add_substituent`, :meth:`add_monosaccharide`,
+        :meth:`add_modification`, :meth:`drop_substituent`, :meth:`drop_monosaccharide`, and
+        :meth:`drop_modification` are all responsible for handling these mutations for you. |Link| methods
+        like :meth:`Link.apply`, :meth:`Link.break_link`, and :meth:`Link.reconnect` are used internally.
 
 
     Attributes
@@ -298,8 +302,15 @@ class Monosaccharide(SaccharideBase):
         if modifications is None:  # pragma: no cover
             modifications = OrderedMultiMap()
 
+        if links is None:
+            links = OrderedMultiMap()
+
+        if id is None:
+            id = uid()
+
         self.modifications = modifications
         self._reducing_end = None
+        self._checked_for_reduction = False
 
         if fast:
             self._anomer = anomer
@@ -316,10 +327,10 @@ class Monosaccharide(SaccharideBase):
 
         self.ring_start = ring_start
         self.ring_end = ring_end
-        self.links = OrderedMultiMap() if links is None else links
+        self.links = links
         self.substituent_links = OrderedMultiMap() if substituent_links\
             is None else substituent_links
-        self.id = id or uid()
+        self.id = id
         if composition is None:
             composition = _get_standard_composition(self)
         self.composition = composition
@@ -387,7 +398,7 @@ class Monosaccharide(SaccharideBase):
                 if isinstance(v, ReducedEnd):
                     continue
                 try:
-                    modifications[k] = Modification[v]
+                    modifications[k] = v
                 except:  # pragma: no cover
                     modifications[k] = v.clone()
 
@@ -440,19 +451,26 @@ class Monosaccharide(SaccharideBase):
         If `Modification.aldi` is present, it will be converted into
         an instance of :class:`.ReducedEnd` with default arguments.
 
+        TODO: Remove Redundancy between `aldi` check and reduction.
+
         Returns
         -------
         ReducedEnd or None
         """
         if self._reducing_end is None:
-            for pos, mod in list(self.modifications.items()):
-                if isinstance(mod, ReducedEnd):
-                    self._reducing_end = mod
-                    break
-                elif mod is Modification.aldi:  # pragma: no cover
-                    self.modifications.popv(Modification.aldi)
-                    self.reducing_end = ReducedEnd()
-                    break
+            if not self._checked_for_reduction:
+                for pos, mod in list(self.modifications.items()):
+                    if isinstance(mod, ReducedEnd):
+                        self._reducing_end = mod
+                        break
+                    elif mod is Modification.aldi:  # pragma: no cover
+                        self.modifications.popv(Modification.aldi)
+                        self.reducing_end = ReducedEnd()
+                        break
+            else:
+                return self._reducing_end
+        if self._reducing_end is None:
+            self._checked_for_reduction = True
         return self._reducing_end
 
     @reducing_end.setter
@@ -477,6 +495,7 @@ class Monosaccharide(SaccharideBase):
             self.modifications.pop(1, red_end)
         # Setting to None will un-reduce the sugar, but should not
         # put a None in :attr:`modifications`
+        self._checked_for_reduction = False
         if value:
             if value is True:
                 value = ReducedEnd()
@@ -504,7 +523,17 @@ class Monosaccharide(SaccharideBase):
             'modifications': self.modifications[position],
             'substituent_links': self.substituent_links[position],
             'links': self.links[position]
-            }
+        }
+
+    def _is_full(self, max_occupancy=0):
+        return self.remaining_capacity() >= 0
+
+    def _remaining_capacity(self):
+        bonds = self.order(deep=True)
+        max_size = self.superclass.value - 1
+        if self.ring_type == RingType.open:
+            max_size += 1
+        return max_size - bonds
 
     def open_attachment_sites(self, max_occupancy=0):
         '''
@@ -623,6 +652,7 @@ class Monosaccharide(SaccharideBase):
         '''
         if self.is_occupied(position) > max_occupancy:
             raise ValueError("Site is already occupied")
+        self._checked_for_reduction = False
         if modification is Modification.aldi:  # pragma: no cover
             self.reducing_end = ReducedEnd()
         else:
@@ -665,7 +695,7 @@ class Monosaccharide(SaccharideBase):
             self.modifications.pop(position, modification)
         except IndexError:
             raise ValueError("Modification {} not found at {}".format(modification, position))
-
+        self._checked_for_reduction = False
         if modification is Modification.aldi:  # pragma: no cover
             self.reducing_end = None
         else:
@@ -837,9 +867,9 @@ class Monosaccharide(SaccharideBase):
             `self`, for chain calls
         '''
         if parent_loss is None:
-            parent_loss = Composition(H=1)
+            parent_loss = Composition("H")
         if child_loss is None:
-            child_loss = Composition(H=1, O=1)
+            child_loss = Composition("OH")
         if self.is_occupied(position) > max_occupancy:
             raise ValueError("Parent Site is already occupied")  # pragma: no cover
         if monosaccharide.is_occupied(child_position) > max_occupancy:
@@ -1055,6 +1085,7 @@ class Monosaccharide(SaccharideBase):
         Does some testing to upgrade outdated, but equivalent
         modification models.
         '''
+        self._checked_for_reduction = False
         self.anomer = state['_anomer']
         self.superclass = state['_superclass']
         self.stem = state['_stem']

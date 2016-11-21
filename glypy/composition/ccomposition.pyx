@@ -15,11 +15,13 @@ from cpython.dict cimport (PyDict_GetItem, PyDict_SetItem, PyDict_Next,
 from cpython.int cimport PyInt_AsLong, PyInt_Check, PyInt_FromLong
 
 
-if PY_MAJOR_VERSION < 3:
-    from cpython.string cimport PyString_Format
+# if PY_MAJOR_VERSION < 3:
+#     from cpython.string cimport PyString_Format
 
-cdef extern from *:
-    unicode PyUnicode_Format(object format, object args)
+# cdef extern from *:
+#     unicode PyUnicode_Format(object format, object args)
+
+from glypy.composition.compat cimport PyStr_Format
 
 from cpython.float cimport PyFloat_AsDouble
 from cpython.tuple cimport PyTuple_GetItem
@@ -78,10 +80,7 @@ cdef str _make_isotope_string(str element_name, int isotope_num):
         return element_name
     else:
         parts = (element_name, isotope_num)
-        if PY_MAJOR_VERSION < 3:
-            return <str>PyString_Format('%s[%d]', parts)
-        else:
-            return <str>PyUnicode_Format('%s[%d]', parts)
+        return <str>PyStr_Format('%s[%d]', parts)
 
 
 cdef class CComposition(dict):
@@ -176,25 +175,60 @@ cdef class CComposition(dict):
         self._mass = None
         self._mass_args = None
 
-
     def __mul__(self, other):
         cdef:
-            CComposition prod = CComposition()
+            CComposition prod
             int rep, v
             str k
+            PyObject *pkey
+            PyObject *pvalue
+            Py_ssize_t ppos = 0
 
         if isinstance(other, CComposition):
             self, other = other, self
         
+        prod = self.clone()
+
+        if not isinstance(other, int):
+            raise ChemicalCompositionError(
+                'Cannot multiply Composition by non-integer', other)
+
+        rep = other
+        while(PyDict_Next(self, &ppos, &pkey, &pvalue)):
+            k = <str>pkey
+            v = PyInt_AsLong(<object>pvalue)
+            prod.setitem(k, v * rep)
+
+        return prod
+        # cdef:
+        #     CComposition prod = CComposition()
+        #     int rep, v
+        #     str k
+
+        # if isinstance(other, CComposition):
+        #     self, other = other, self
+        
+        # if not isinstance(other, int):
+        #     raise ChemicalCompositionError(
+        #         'Cannot multiply Composition by non-integer',
+        #         other)
+        # rep = other
+        # for k, v in self.items():
+        #     prod.setitem(k, v * rep)
+        # return prod
+
+    def __imul__(self, other):
+        cdef:
+            str k
+            int v, rep
         if not isinstance(other, int):
             raise ChemicalCompositionError(
                 'Cannot multiply Composition by non-integer',
                 other)
         rep = other
-        for k, v in self.items():
-            prod.setitem(k, v * rep)
-        return prod
-
+        for k, v in list(self.items()):
+            self.setitem(k, v * rep)
+        return self
 
     def __richcmp__(self, other, int code):
         cdef:
@@ -222,6 +256,24 @@ cdef class CComposition(dict):
                 if self_value != other_value:
                     return False
             return True
+        elif code == 3:
+            if not isinstance(other, dict):
+                return True
+            self_size = PyDict_Size(self)
+            other_size = PyDict_Size(other)
+            if self_size > other_size:
+                self, other = other, self
+            other_size = 0
+            while(PyDict_Next(other, &other_size, &pkey, &pvalue)):
+                other_value = PyInt_AsLong(<object>pvalue)
+                pinterm = PyDict_GetItem(self, <object>pkey)
+                if pinterm == NULL:
+                    self_value = 0
+                else:
+                    self_value = PyInt_AsLong(<object>pinterm)
+                if self_value != other_value:
+                    return True
+            return False
         else:
             return NotImplemented
 
@@ -398,7 +450,7 @@ cdef class CComposition(dict):
 
 
     cpdef double calc_mass(self, int average=False, charge=None, dict mass_data=nist_mass) except -1:
-        cdef long mdid
+        cdef object mdid
         mdid = id(mass_data)
         if self._mass_args is not None and average is self._mass_args[0]\
                 and charge == self._mass_args[1] and mdid == self._mass_args[2]:
@@ -460,6 +512,28 @@ cdef class CComposition(dict):
         self._mass_args = None
 
 Composition = CComposition
+
+
+cpdef CComposition composition_sum(list compositions):
+    cdef:
+        size_t i
+        CComposition accumulator, current
+        str elem
+        long cnt
+        PyObject *pkey
+        PyObject *pvalue
+        Py_ssize_t ppos = 0
+
+    accumulator = CComposition()
+    for i in range(len(compositions)):
+        current = compositions[i]
+        ppos = 0
+
+        while(PyDict_Next(current, &ppos, &pkey, &pvalue)):
+            elem = <str>pkey
+            cnt = accumulator.getitem(elem)
+            accumulator.setitem(elem, cnt + PyInt_AsLong(<object>pvalue))
+    return accumulator
 
 
 @cython.wraparound(False)

@@ -150,7 +150,7 @@ class CrossRingFragment(Monosaccharide):
 
     Attributes
     ----------
-    c1, c2: int
+    cleave_1, cleave_2: int
         Ring sites that were cleaved
     kind: str
         Whether the fragment is reducing (X) or non-reducing (A)
@@ -212,15 +212,15 @@ class CrossRingFragment(Monosaccharide):
         for k, v in self.modifications.items():
             if isinstance(v, ReducedEnd):
                 continue
-            modifications[k] = Modification[v]
+            modifications[k] = v
 
         residue = CrossRingFragment(
             self._base_composition.clone(), self.cleave_1, self.cleave_2,
             self.contains, self.kind,
-            stem=self.stem,
-            configuration=self.configuration,
+            stem=self._stem,
+            configuration=self._configuration,
             modifications=modifications,
-            anomer=self.anomer,
+            anomer=self._anomer,
             id=self.id if prop_id else None)
         for pos, link in self.substituent_links.items():
             sub = link.to(self)
@@ -390,20 +390,28 @@ def pack_fragment(fragment_parts, c1, c2, include, residue, attach=True, copy=Tr
     }
 
     for i in fragment_parts:
-        fragment_data['links'].update(i['links'])
-        fragment_data['modifications'].update(i['modifications'])
-        fragment_data['substituent_links'].update(i['substituent_links'])
+        ilink = i['links']
+        if ilink:
+            fragment_data['links'].update(ilink)
+
+        imodifications = i['modifications']
+        if imodifications:
+            fragment_data['modifications'].update(imodifications)
+
+        isubstituents = i['substituent_links']
+        if isubstituents:
+            fragment_data['substituent_links'].update(isubstituents)
 
     fragment_object = CrossRingFragment(
         fragment_data['composition'], c1, c2, fragment_data['contains'],
-        '?', fragment_data['modifications'], stem=residue.stem,
-        configuration=residue.configuration, id=residue.id, source=residue
+        '?', fragment_data['modifications'], stem=residue._stem,
+        configuration=residue._configuration, id=residue.id, source=residue
     )
 
     composition_shift = Composition()
     for pos, mod in fragment_data["modifications"].items():
-        composition_shift = composition_shift + modification_compositions[mod](pos)
-    fragment_object.composition = fragment_object.composition + composition_shift
+        composition_shift += modification_compositions[mod](pos)
+    fragment_object.composition += composition_shift
 
     for pos, link in fragment_data['substituent_links'].items():
         subst = link[residue]
@@ -438,7 +446,7 @@ def unroll_ring(residue):
     Parameters
     ----------
     residue: Monosaccharide
-        The cyclical carbohydrate to unroll
+        The carbohydrate to unroll
 
     Returns
     -------
@@ -500,14 +508,14 @@ def cleave_ring(residue, c1, c2):
     # If the ring's start is associated with c1, add all positions prior to ring start
     # to c1.
     if ring_start in c1_include and ring_start - 1 not in c1_include and ring_start != 1:
-        c1_segment = linear[:ring_start-1] + c1_segment
+        c1_segment = linear[:ring_start - 1] + c1_segment
         c1_include = list(i + 1 for i in range(ring_start + 1)) + c1_include
     # Alternatively if the ring start is in c2, add the preceding residues to it
     elif ring_start in c2_include and ring_start - 1 not in c2_include and ring_start != 1:
-        c2_segment = linear[:ring_start-1] + c2_segment
+        c2_segment = linear[:ring_start - 1] + c2_segment
         c2_include = list(i + 1 for i in range(ring_start + 1)) + c2_include
 
-    # If the ring's end is associated withc2, add all positions proceeding ring end
+    # If the ring's end is associated with c2, add all positions proceeding ring end
     # to c2
     if ring_end in c2_include:
         c2_segment = c2_segment + linear[ring_end:]
