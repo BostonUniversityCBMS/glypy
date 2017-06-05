@@ -127,6 +127,9 @@ class BoundURIRef(URIRef):
         rt._result_ref = None
         return rt
 
+    def __hash__(self):
+        return URIRef.__hash__(self)
+
     def get(self, simplify=True, refresh=False):
         """Get the referenced entity either from :attr:`_bind_source`
         or the cached reference in :attr:`_result_ref`
@@ -151,6 +154,9 @@ class BoundURIRef(URIRef):
             return self._result_ref
 
     __call__ = get
+
+    def _repr_pretty_(self, p, cycle):
+        return p.pretty(repr(self))
 
     def __getattr__(self, name):
         '''

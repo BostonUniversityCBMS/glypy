@@ -16,16 +16,27 @@ if sys.platform == 'win32':
 try:
     from Cython.Build import cythonize
     extensions = cythonize(
-      [Extension("glypy.composition.ccomposition", ["glypy/composition/ccomposition.pyx"]),
-       ],
-      annotate=True)
+        [Extension("glypy.composition.ccomposition", ["glypy/composition/ccomposition.pyx"]),
+         ],
+        annotate=True)
 except (ImportError, AttributeError):
     print("No Cython")
     extensions = [
-      Extension('glypy.composition.ccomposition', sources=['glypy/composition/ccomposition.c']),
+        Extension('glypy.composition.ccomposition', sources=[
+                  'glypy/composition/ccomposition.c']),
     ]
 
 cmdclass = {}
+
+
+with open("glypy/version.py") as version_file:
+    version = None
+    for line in version_file.readlines():
+        if "version = " in line:
+            version = line.split(" = ")[1].replace("\"", "").strip()
+            break
+    else:
+        print("Cannot determine version")
 
 
 class BuildFailed(Exception):
@@ -57,6 +68,7 @@ class ve_build_ext(build_ext):
                 raise BuildFailed()
             raise
 
+
 cmdclass['build_ext'] = ve_build_ext
 
 
@@ -66,11 +78,12 @@ def status_msgs(*msgs):
         print(msg)
     print('*' * 75)
 
+
 required = ["hjson", "six"]
+
 
 extras = {
     'plot': ["matplotlib>=1.4.3"],
-    'glycomedb': ['lxml', 'requests'],
     'glyspace': ['requests', 'rdflib', "SPARQLWrapper"]
 }
 
@@ -79,25 +92,26 @@ extras['all'] = list({d for extra in extras.values() for d in extra})
 
 def run_setup(include_cext=True):
     setup(
-          name='glypy',
-          version='0.0.10',
-          packages=find_packages(),
-          include_package_data=True,
-          package_data={
-              "glypy.structure": ["glypy/structure/data/*"],
-              "glypy.io.nomenclature": ["glypy/io/nomenclature/data/*"]
-          },
-          install_requires=required,
-          extras_require=extras,
-          cmdclass=cmdclass,
-          zip_safe=False,
-          keywords="glycomics glycan carbohydrate glycoinformatics glypy n-linked o-linked glycosaminoglycan",
-          description="A Glycoinformatics Toolkit",
-          ext_modules=extensions if include_cext else None,
-          url="https://github.com/mobiusklein/glypy",
-          maintainer='Joshua Klein',
-          maintainer_email="jaklein@bu.edu"
+        name='glypy',
+        version=version,
+        packages=find_packages(),
+        include_package_data=True,
+        package_data={
+            "glypy.structure": ["glypy/structure/data/*"],
+            "glypy.io.nomenclature": ["glypy/io/nomenclature/data/*"]
+        },
+        install_requires=required,
+        extras_require=extras,
+        cmdclass=cmdclass,
+        zip_safe=False,
+        keywords="glycomics glycan carbohydrate glycoinformatics glypy n-linked o-linked glycosaminoglycan",
+        description="A Glycoinformatics Toolkit",
+        ext_modules=extensions if include_cext else None,
+        url="https://github.com/mobiusklein/glypy",
+        maintainer='Joshua Klein',
+        maintainer_email="jaklein@bu.edu"
     )
+
 
 try:
     run_setup(True)

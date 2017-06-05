@@ -1,7 +1,7 @@
 from six import add_metaclass
 try:
     intern
-except:
+except NameError:
     from sys import intern
 
 debug = False
@@ -59,6 +59,7 @@ class EnumValue(object):
             except KeyError:  # pragma: no cover
                 pass
         raise KeyError("Could not resolve {} against {}".format(self, mapping))
+
 
 debug = True
 

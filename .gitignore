@@ -1,5 +1,13 @@
 test_reports/
+test_data/*.png
+*sublime*
+examples/
+.coverage
+.noseids
+.ropeproject/
+contrib/
 *egg-info/
 *.pyc
 .ipynb_checkpoints/
 *.pyd
+*__pycache__

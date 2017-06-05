@@ -28,13 +28,14 @@ from glypy.utils import tree, uid
 from glypy.utils.multimap import OrderedMultiMap
 
 from glypy.structure.base import SaccharideCollection, MoleculeBase
+from glypy.structure.constants import (Anomer, Stem, Configuration)
 
 from glypy.io import iupac
 from glypy.io.iupac import (
-    parse_modifications, named_structures, Modification,
-    substituent_from_iupac, Stem, extract_modifications,
-    resolve_substituent, aminate_substituent, monosaccharide_reference as _monosaccharide_reference,
-    resolve_special_base_type as _resolve_special_base_type)
+    named_structures,
+    monosaccharide_reference as _monosaccharide_reference,
+    resolve_special_base_type as _resolve_special_base_type,
+    IUPACError)
 
 from glypy.composition.base import formula
 from glypy.composition.composition_transform import (
@@ -42,10 +43,13 @@ from glypy.composition.composition_transform import (
     _derivatize_reducing_end, _strip_derivatization_reducing_end,
     make_counter)
 
-monosaccharide_parser_lite = re.compile(r'''^(?P<modification>[a-z0-9_\-,]*)
-                                       (?P<base_type>[A-Z][a-z]+)
-                                       (?P<substituent>[^-]*?)
-                                       (?P<derivatization>\^[^\s-]*?)?$''', re.VERBOSE)
+from six import string_types as basestring
+
+monosaccharide_parser_lite = re.compile(
+    r'''^(?P<modification>[a-z0-9_\-,]*)
+        (?P<base_type>[A-Z][a-z]+)
+        (?P<substituent>[^-]*?)
+        (?P<derivatization>\^[^\s-]*?)?$''', re.VERBOSE)
 
 
 monosaccharide_residue_reference = {}
@@ -74,11 +78,11 @@ class IUPACLiteMonosaccharideDeserializer(iupac.DerivatizationAwareMonosaccharid
             try:
                 result = SubstituentResidue.from_iupac_lite(monosaccharide_str)
                 return result
-            except:
+            except Exception:
                 try:  # pragma: no cover
                     result = MolecularComposition.from_iupac_lite(monosaccharide_str)
                     return result
-                except:
+                except Exception:
                     raise iupac.IUPACError("Cannot find pattern in {}".format(monosaccharide_str))
         residue = self.build_residue(match_dict)
 
@@ -91,7 +95,10 @@ class IUPACLiteMonosaccharideDeserializer(iupac.DerivatizationAwareMonosaccharid
         base_type = match_dict["base_type"]
         modification = match_dict['modification']
 
-        residue = named_structures.monosaccharides[base_type]
+        try:
+            residue = named_structures.monosaccharides[base_type]
+        except KeyError:
+            raise IUPACError("Unknown Residue Base-type %r" % (base_type,))
         base_is_modified = len(residue.substituent_links) + len(residue.modifications) > 0
 
         self.set_modifications(residue, modification)
@@ -112,13 +119,16 @@ class IUPACLiteMonosaccharideSerializer(iupac.DerivatizationAwareMonosaccharideS
         .. note::
             This function is not suitable for use on whole |Glycan| objects. Instead,
             see :meth:`GlycanComposition.from_glycan` and :meth:`GlycanComposition.serialize`
+
         Parameters
         ----------
         residue: Monosaccharide
             The object to be encoded
+
         Returns
         -------
         str
+
         See Also
         --------
         :func:`from_iupac_lite`
@@ -210,9 +220,9 @@ class MonosaccharideResidue(Monosaccharide):
         strip_derivatization(residue)
         if _resolve_special_base_type(monosaccharide) is None:
             if not configuration:
-                residue.configuration = (None,)
+                residue.configuration = (Configuration.x,)
             if not stem:
-                residue.stem = (None,)
+                residue.stem = (Stem.x,)
         if not ring:
             residue.ring_start = residue.ring_end = None
         if deriv:
@@ -224,7 +234,7 @@ class MonosaccharideResidue(Monosaccharide):
     def __init__(self, *args, **kwargs):
         super(MonosaccharideResidue, self).__init__(*args, **kwargs)
         self.composition -= water_composition
-        self.anomer = None
+        self.anomer = Anomer.x
 
     def clone(self, *args, **kwargs):
         kwargs.setdefault("monosaccharide_type", MonosaccharideResidue)
@@ -260,7 +270,7 @@ class MonosaccharideResidue(Monosaccharide):
         '''
         if (other is None):
             return False
-        if not isinstance(other, MonosaccharideResidue):
+        if not isinstance(other, (MonosaccharideResidue, str)):
             return False
         return str(self) == str(other)
 
@@ -346,13 +356,15 @@ class FrozenMonosaccharideResidue(MonosaccharideResidue):
     def __str__(self):
         try:
             return self._name
-        except:
+        except AttributeError:
             name = to_iupac_lite(self)
             self._name = name
             return name
 
     def clone(self, *args, **kwargs):
-        if self._frozen:
+        if self._frozen and kwargs.get(
+                "monosaccharide_type",
+                FrozenMonosaccharideResidue) is FrozenMonosaccharideResidue:
             return self
         else:
             return super(FrozenMonosaccharideResidue, self).clone(*args, **kwargs)
@@ -369,8 +381,9 @@ class FrozenMonosaccharideResidue(MonosaccharideResidue):
             self._total_composition = super(FrozenMonosaccharideResidue, self).total_composition()
         return self._total_composition
 
-    # def mass(self, average=False, charge=0, mass_data=None):
-    #     return self.total_composition().calc_mass(average=average, charge=charge, mass_data=mass_data)
+    def copy_underivatized(self):
+        return self.from_iupac_lite(
+            IUPACLiteMonosaccharideDeserializer.strip_derivatization(str(self)))
 
 
 class SubstituentResidue(Substituent):
@@ -507,7 +520,7 @@ class MolecularComposition(MoleculeBase):  # pragma: no cover
     def __eq__(self, other):
         try:
             return self.name == other or self.name == other.name
-        except:
+        except AttributeError:
             return self.name == str(other)
 
     def __ne__(self, other):
@@ -852,19 +865,25 @@ class GlycanComposition(dict, SaccharideCollection):
         if deriv:
             # strip_derivatization(self)
             # derivatize(self, deriv)
-            self._derivatized(deriv.clone(), make_counter(uid()))
+            self._derivatized(deriv.clone(), make_counter(uid()), include_reducing_end=False)
 
     @classmethod
     def parse(cls, string):
         tokens, reduced = cls._get_parse_tokens(string)
         inst = cls()
         for token in tokens:
-            residue, count = token.split(":")
+            try:
+                residue, count = token.split(":")
+            except ValueError:
+                if string == "{}":
+                    return inst
+                else:
+                    raise ValueError("Malformed Token, %s" % (token,))
             inst[from_iupac_lite(residue)] = int(count)
         inst._handle_reduction_and_derivatization(reduced)
         return inst
 
-    def _derivatized(self, substituent, id_base):
+    def _derivatized(self, substituent, id_base, include_reducing_end=True):
         n = 2
         for k, v in self.items():
             if k.node_type is Substituent.node_type:
@@ -872,7 +891,7 @@ class GlycanComposition(dict, SaccharideCollection):
         self._composition_offset += (
             substituent.total_composition() -
             substituent.attachment_composition_loss() * 2) * n
-        if self._reducing_end is not None:
+        if self._reducing_end is not None and include_reducing_end:
             _derivatize_reducing_end(self._reducing_end, substituent, id_base)
         self.collapse()
         self._invalidate()
@@ -925,7 +944,13 @@ class FrozenGlycanComposition(GlycanComposition):
         tokens, reduced = cls._get_parse_tokens(string)
         inst = cls()
         for token in tokens:
-            residue, count = token.split(":")
+            try:
+                residue, count = token.split(":")
+            except ValueError:
+                if string == "{}":
+                    return inst
+                else:
+                    raise ValueError("Malformed Token, %s" % (token,))
             inst[FrozenMonosaccharideResidue.from_iupac_lite(residue)] = int(count)
         inst._handle_reduction_and_derivatization(reduced)
         return inst
@@ -963,3 +988,11 @@ class FrozenGlycanComposition(GlycanComposition):
 
 class FrozenError(ValueError):
     pass
+
+
+class HashableGlycanComposition(FrozenGlycanComposition):
+    def __hash__(self):
+        return hash(str(self))
+
+    def __eq__(self, other):
+        return str(self) == str(other)

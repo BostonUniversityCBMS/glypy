@@ -18,7 +18,7 @@ from glypy.composition import Composition, composition_transform
 from glypy.algorithms import subtree_search
 from glypy.algorithms import similarity
 
-from common import emit, load
+from .common import emit, load
 
 ReducedEnd = monosaccharide.ReducedEnd
 Substituent = glypy.Substituent
@@ -518,56 +518,56 @@ class SubtreeSearchTests(unittest.TestCase):
         copy.root.add_monosaccharide(monosaccharides.Fucose, 3)
         self.assertEqual(subtree_search.n_saccharide_similarity(core, copy), 0.7)
 
-    def test_distinct_fragments(self):
-        from glypy.io import glycomedb
-        bi = glycomedb.get(8960)
-        tet = glycomedb.get(576)
-        self.assertAlmostEqual(bi.mass(), tet.mass(), 3)
-        bi_dist, tet_dist = subtree_search.distinct_fragments(bi, tet)
-        self.assertEqual(len(tet_dist), 0)
-        self.assertEqual(len(bi_dist), 4)
+    # def test_distinct_fragments(self):
+    #     from glypy.io import glycomedb
+    #     bi = glycomedb.get(8960)
+    #     tet = glycomedb.get(576)
+    #     self.assertAlmostEqual(bi.mass(), tet.mass(), 3)
+    #     bi_dist, tet_dist = subtree_search.distinct_fragments(bi, tet)
+    #     self.assertEqual(len(tet_dist), 0)
+    #     self.assertEqual(len(bi_dist), 4)
 
 
-class IdentifyTests(unittest.TestCase):
+# class IdentifyTests(unittest.TestCase):
 
-    def test_is_a_predicate(self):
-        for name, mono in monosaccharides.items():
-            result = identity.is_a(mono, name)
-            self.assertTrue(result)
+#     def test_is_a_predicate(self):
+#         for name, mono in monosaccharides.items():
+#             result = identity.is_a(mono, name)
+#             self.assertTrue(result)
 
-    def test_identify_as(self):
-        for name, mono in monosaccharides.items():
-            if name in {"Hex", "Pen", "Oct", "Hep", "Non"}:
-                continue
-            pref_name = identity.identify(mono)
-            if not (name == pref_name or name in synonyms.monosaccharides[pref_name]):
-                raise AssertionError(
-                    "{}".format((name, pref_name, synonyms.monosaccharides[pref_name])))
+#     def test_identify_as(self):
+#         for name, mono in monosaccharides.items():
+#             if name in {"Hex", "Pen", "Oct", "Hep", "Non"}:
+#                 continue
+#             pref_name = identity.identify(mono)
+#             if not (name == pref_name or name in synonyms.monosaccharides[pref_name]):
+#                 raise AssertionError(
+#                     "{}".format((name, pref_name, synonyms.monosaccharides[pref_name])))
 
-    def test_identify_substituents(self):
-        self.assertTrue(
-            identity.is_a(Substituent("n-acetyl"), Substituent("n-acetyl")))
-        self.assertFalse(
-            identity.is_a(Substituent('methyl'), Substituent('n-acetyl')))
-        self.assertFalse(
-            identity.is_a(monosaccharides.Man, Substituent('n-acetyl')))
-        self.assertFalse(
-            identity.is_a(Substituent('n-acetyl'), monosaccharides.Man))
+#     def test_identify_substituents(self):
+#         self.assertTrue(
+#             identity.is_a(Substituent("n-acetyl"), Substituent("n-acetyl")))
+#         self.assertFalse(
+#             identity.is_a(Substituent('methyl'), Substituent('n-acetyl')))
+#         self.assertFalse(
+#             identity.is_a(monosaccharides.Man, Substituent('n-acetyl')))
+#         self.assertFalse(
+#             identity.is_a(Substituent('n-acetyl'), monosaccharides.Man))
 
-    def test_get_preferred_name(self):
-        self.assertTrue(identity.get_preferred_name('bdMan') == 'Man')
+#     def test_get_preferred_name(self):
+#         self.assertTrue(identity.get_preferred_name('bdMan') == 'Man')
 
-    def test_identify_failure(self):
-        # Will fail because Hex is blacklisted
-        self.assertRaises(
-            identity.IdentifyException, lambda: identity.identify(monosaccharides.Hex))
+#     def test_identify_failure(self):
+#         # Will fail because Hex is blacklisted
+#         self.assertRaises(
+#             identity.IdentifyException, lambda: identity.identify(monosaccharides.Hex))
 
-    def test_precision(self):
-        self.assertFalse(identity.is_a(monosaccharides.Kdn, monosaccharides.NeuAc))
-        self.assertFalse(identity.is_a(monosaccharides.NeuAc, monosaccharides.Kdn))
+#     def test_precision(self):
+#         self.assertFalse(identity.is_a(monosaccharides.Kdn, monosaccharides.NeuAc))
+#         self.assertFalse(identity.is_a(monosaccharides.NeuAc, monosaccharides.Kdn))
 
-    def test_grouping_axes(self):
-        tree = identity.residue_list_to_tree((monosaccharides).values())
+#     def test_grouping_axes(self):
+#         tree = identity.residue_list_to_tree((monosaccharides).values())
 
 
 class LinearCodeTests(unittest.TestCase):
@@ -583,8 +583,8 @@ class LinearCodeTests(unittest.TestCase):
         sulfated.reducing_end = None
         sulfated.root.ring_start = 1
         sulfated.root.ring_end = 5
-        dup = linear_code.loads(linear_code.dumps(sulfated))
-        self.assertEqual(dup, sulfated)
+        dup2 = linear_code.loads(linear_code.dumps(sulfated))
+        self.assertEqual(dup2, sulfated)
 
         sulfated = glycoct.loads(sulfated_glycan)
         dup = linear_code.loads(linear_code.dumps(sulfated))

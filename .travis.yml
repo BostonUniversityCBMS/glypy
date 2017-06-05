@@ -1,6 +1,7 @@
 language: python
 python:
   - "2.7"
+  - "3.5"
   # does not have headers provided, please ask https://launchpad.net/~pypy/+archive/ppa
   # maintainers to fix their pypy-dev package.
   # - "pypy"
@@ -11,8 +12,9 @@ cache: pip
 # command to install dependencies
 install:
   - pip install -U setuptools
-  - pip install cython
-  - pip install -e .[plot,glycomedb,glyspace]
+  - pip install coverage pytest pytest-cov
+  - pip install Cython --install-option="--no-cython-compile"
+  - pip install -e .[plot,glyspace]
   # - pip install -r requirements.txt
 # command to run tests
-script: nosetests
+script: make test

@@ -5,8 +5,6 @@ from glypy.composition import composition_transform
 from glypy.composition import glycan_composition
 from glypy import monosaccharides, Substituent, glycans
 
-from common import load
-
 water_mass = glypy.Composition("H2O").mass
 
 GlycanComposition = glycan_composition.GlycanComposition
@@ -206,6 +204,10 @@ class GlycanCompositionTests(unittest.TestCase):
         self.assertEqual(comp["Glc2NAc"], 0)
         self.assertEqual(comp["Hex"], 3)
         self.assertEqual(comp["Man"], 0)
+
+    def test_parse_derivatized_reduced(self):
+        x = self.GlycanCompositionType.parse('{Fuc^Me:1; Hex^Me:5; HexNAc^Me:4; Neu5NAc^Me:1}$C1H4')
+        self.assertAlmostEqual(x.mass(), 2598.3402, 4)
 
 
 class FrozenGlycanCompositionTests(GlycanCompositionTests):

@@ -97,9 +97,22 @@ class MultiMap(object):
     def __eq__(self, other):
         if other is None:  # pragma: no cover
             return False
-        for a, b in izip_longest(self.items(), other.items()):
-            if a != b:
-                return False
+        for a in self.keys():
+            if a in other:
+                if self[a] != other[a]:
+                    return False
+            else:
+                if self[a] != []:
+                    return False
+        for b in other.keys():
+            if b in self:
+                continue
+            else:
+                if other[b] != []:
+                    return False
+        # for a, b in izip_longest(self.items(), other.items()):
+        #     if a != b:
+        #         return False
         return True
 
     def __ne__(self, other):
@@ -157,6 +170,10 @@ class OrderedMultiMap(MultiMap):
     def lists(self):
         for key in self.key_order:
             yield key, self[key]
+
+    def reorder(self, new_order):
+        assert set(new_order) == set(self.key_order)
+        self.key_order = list(new_order)
 
     def __setitem__(self, key, value):
         if key not in self.key_order:

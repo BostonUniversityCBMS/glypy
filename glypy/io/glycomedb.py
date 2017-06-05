@@ -10,6 +10,16 @@ from glypy.algorithms.database import (Taxon, Aglyca, Motif,
                                        GlycanRecordWithTaxon,
                                        RecordDatabase)
 
+try:
+    xrange
+except NameError:
+    xrange = range
+
+
+import warnings
+warnings.warn("Glycome-DB is no longer available. All Methods Will Fail.", DeprecationWarning)
+
+
 logger = logging.getLogger(__name__)
 
 cache = None
@@ -221,6 +231,7 @@ def search_minimum_common_substructure(glycan_obj, minimum_residues=1):  # pragm
         for m in matches:
             yield m
 
+
 _mcs_search_url = "http://www.glycome-db.org/database/searchMCS.action"
 
 
@@ -260,9 +271,13 @@ def search_by_species(tax_id):
         tree = etree.fromstring(get_more.content)
         matches = [GlycomeDBSearchMatch(**s.attrib) for s in tree.findall(".//structure")]
         if len(matches) == 0:
-            raise StopIteration(get_more.content)
+            session.close()
+            # raise StopIteration(get_more.content)
+            return
         for m in matches:
             yield m
+    session.close()
+
 
 _taxa_search_url = "http://www.glycome-db.org/database/searchBySpecies.action"
 

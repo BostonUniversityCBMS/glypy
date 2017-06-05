@@ -1,6 +1,7 @@
 import re
-from collections import deque
+import warnings
 
+from collections import deque
 from glypy.structure import Monosaccharide, Glycan, constants, named_structures, Substituent
 from glypy.composition.structure_composition import substituent_compositions
 from glypy.composition.composition_transform import has_derivatization, derivatize
@@ -8,7 +9,7 @@ from glypy.io import format_constants_map
 from glypy.io.nomenclature import identity
 from glypy.utils import invert_dict
 
-from glypy.io.file_utils import ParserInterface
+from glypy.io.file_utils import ParserInterface, ParserError
 
 
 # A static copy of monosaccharide names to structures for copy-free comparison
@@ -18,6 +19,8 @@ monosaccharide_reference = {k: v for k, v in named_structures.monosaccharides.it
 anomer_map_from = dict(format_constants_map.anomer_map)
 anomer_map_from['?'] = anomer_map_from.pop('x')
 anomer_map_to = invert_dict(anomer_map_from)
+anomer_map_from['beta'] = anomer_map_from['b']
+anomer_map_from['alpha'] = anomer_map_from['a']
 
 
 Stem = constants.Stem
@@ -29,11 +32,11 @@ SuperClass = constants.SuperClass
 def tryint(i):
     try:
         return int(i)
-    except:
+    except ValueError:
         return -1
 
 
-class IUPACError(Exception):
+class IUPACError(ParserError):
     pass
 
 
@@ -115,13 +118,17 @@ class SubstituentSerializer(object):
                 j = positions.pop(i)
                 substituents.insert(i, "acetyl")
                 positions.insert(i, j)
-            except:  # pragma: no cover
+            except Exception:  # pragma: no cover
                 pass
         elif identity.is_a(residue, monosaccharides["NeuGc"], exact=False, short_circuit=True):
-            # i = substituents.index("n_glycolyl")
-            # substituents.pop(i)
-            # positions.pop(i)
-            pass
+            try:
+                i = substituents.index("n_glycolyl")
+                substituents.pop(i)
+                j = positions.pop(i)
+                substituents.insert(i, "glycolyl")
+                positions.insert(i, j)
+            except Exception:  # pragma: no cover
+                pass
         elif identity.is_a(residue, monosaccharides["Neu"], exact=False, short_circuit=True):
             i = substituents.index("amino")
             substituents.pop(i)
@@ -148,7 +155,7 @@ class ModificationSerializer(object):
                     pop_ix = mods.index(mod)
                     pos.pop(pop_ix)
                     mods.pop(pop_ix)
-                except:  # pragma: no cover
+                except Exception:  # pragma: no cover
                     pass
 
         elif "Fuc" in base_type:
@@ -181,10 +188,13 @@ class ModificationDeserializer(object):
                 continue
             try:
                 pos, mod = token.split("-")
-            except:
+            except Exception:
                 pos = -1
                 mod = token
-            pairs.append((int(pos), Modification[mod]))
+            try:
+                pairs.append((int(pos), Modification[mod]))
+            except KeyError:
+                raise IUPACError("Could not determine modification from %s" % modification_string)
         return pairs
 
     def __call__(self, modification_string):
@@ -378,16 +388,10 @@ def aminate_substituent(substituent):
     return aminated
 
 
-monosaccharide_parser = re.compile(r'''(?P<anomer>[abo?])-
-                                       (?P<configuration>[LD?])-
-                                       (?P<modification>[a-z0-9_\-,]*)
-                                       (?P<base_type>[^-]{3}?)
-                                       (?P<ring_type>[xpfo?])
-                                       (?P<substituent>[^-]*?)
-                                       (?P<linkage>-\([0-9?]-[0-9?]\)-?)?$''', re.VERBOSE)
-
-
 class SubstituentDeserializer(object):
+    def __init__(self, error_on_missing=True):
+        self.error_on_missing = error_on_missing
+
     def substituent_from_iupac(self, substituents):
         parts = re.split(r"\(|\)", substituents)
         for part in parts:
@@ -410,9 +414,11 @@ class SubstituentDeserializer(object):
                 if name == "A":
                     pass
                 else:  # pragma: no cover
-                    import warnings
-                    warnings.warn("No translation rule found to convert %s into a Substituent" % name)
-                    continue
+                    if not self.error_on_missing:
+                        warnings.warn("No translation rule found to convert %s into a Substituent" % name)
+                        continue
+                    else:
+                        raise IUPACError("No translation rule found to convert %s into a Substituent" % name)
             yield int(position), name
 
     def symbol_to_name(self, symbol):
@@ -427,13 +433,14 @@ substituent_from_iupac = SubstituentDeserializer()
 
 
 class MonosaccharideDeserializer(object):
-    pattern = re.compile(r'''(?P<anomer>[abo?])-
-                             (?P<configuration>[LD?])-
-                             (?P<modification>[a-z0-9_\-,]*)
-                             (?P<base_type>[^-]{3}?)
-                             (?P<ring_type>[xpfo?])
-                             (?P<substituent>[^-]*?)
-                             (?P<linkage>-\([0-9?]-[0-9?]\)-?)?$''', re.VERBOSE)
+    pattern = re.compile(r'''(?:(?P<anomer>[abo?]|alpha|beta)-)?
+                         (?P<configuration>[LD?])-
+                         (?P<modification>[a-z0-9_\-,]*)
+                         (?P<base_type>[^-]{3}?)
+                         (?P<ring_type>[xpfo?])?
+                         (?P<substituent>[^-]*?)
+                         (?P<linkage>-\([0-9?]->?[0-9?]\)-?)?
+                         $''', re.VERBOSE)
 
     def __init__(self, modification_parser=None, substituent_parser=None):
         if modification_parser is None:
@@ -464,7 +471,10 @@ class MonosaccharideDeserializer(object):
             residue.ring_end = residue.ring_start = None
 
     def build_residue(self, match_dict):
-        anomer = anomer_map_from[match_dict['anomer']]
+        try:
+            anomer = anomer_map_from[match_dict['anomer']]
+        except KeyError:
+            anomer = anomer_map_from['?']
         base_type = match_dict["base_type"]
         configuration = match_dict["configuration"].lower()
         ring_type = match_dict['ring_type']
@@ -472,8 +482,10 @@ class MonosaccharideDeserializer(object):
         modification = match_dict['modification']
 
         linkage = [d for d in match_dict.get('linkage') or "" if d.isdigit() or d == "?"]
-
-        residue = named_structures.monosaccharides[base_type]
+        try:
+            residue = named_structures.monosaccharides[base_type]
+        except KeyError:
+            raise IUPACError("Unknown Residue Base-type %r" % (base_type,))
         base_is_modified = len(residue.substituent_links) + len(residue.modifications) > 0
 
         if len(residue.configuration) == 1:
@@ -544,7 +556,7 @@ class MonosaccharideDeserializer(object):
     def monosaccharide_from_iupac(self, monosaccharide_str, parent=None):
         match_dict = self.extract_pattern(monosaccharide_str)
         residue, linkage = self.build_residue(match_dict)
-        linkage = map(tryint, linkage)
+        linkage = list(map(tryint, linkage))
 
         self.add_monosaccharide_bond(residue, parent, linkage)
         return residue, linkage
@@ -562,14 +574,14 @@ class MonosaccharideDeserializer(object):
 
 
 class DerivatizationAwareMonosaccharideDeserializer(MonosaccharideDeserializer):
-    pattern = re.compile(r'''(?P<anomer>[abo?])-
+    pattern = re.compile(r'''(?:(?P<anomer>[abo?]|alpha|beta)-)?
                              (?P<configuration>[LD?])-
                              (?P<modification>[a-z0-9_\-,]*)
                              (?P<base_type>[^-]{3}?)
-                             (?P<ring_type>[xpfo?])
+                             (?P<ring_type>[xpfo?])?
                              (?P<substituent>[^-]*?)
                              (?P<derivatization>\^[^\s-]*?)?
-                             (?P<linkage>-\([0-9?]-[0-9?]\)-?)?$''', re.VERBOSE)
+                             (?P<linkage>-\([0-9?]->?[0-9?]\)-?)?$''', re.VERBOSE)
 
     def add_monosaccharide_bond(self, residue, parent, linkage):
         if parent is not None and linkage != ():
@@ -596,7 +608,7 @@ class DerivatizationAwareMonosaccharideDeserializer(MonosaccharideDeserializer):
     def monosaccharide_from_iupac(self, monosaccharide_str, parent=None):
         match_dict = self.extract_pattern(monosaccharide_str)
         residue, linkage = self.build_residue(match_dict)
-        linkage = map(tryint, linkage)
+        linkage = list(map(tryint, linkage))
 
         self.add_monosaccharide_bond(residue, parent, linkage)
 
@@ -624,6 +636,10 @@ class DerivatizationAwareMonosaccharideDeserializer(MonosaccharideDeserializer):
                 if neg_capacity > 0:
                     raise ValueError("Could not completely remove overload from %s" % (node,))
 
+    def strip_derivatization(self, residue_str):
+        base = residue_str.rsplit("^")[0]
+        return self(base)
+
 
 monosaccharide_from_iupac = MonosaccharideDeserializer()
 
@@ -645,6 +661,9 @@ class GlycanDeserializer(object):
         root = None
         last_residue = None
         branch_stack = []
+
+        # Remove the base
+        text = re.sub(r"\(\?->?$", "", text)
 
         while len(text) > 0:
 
