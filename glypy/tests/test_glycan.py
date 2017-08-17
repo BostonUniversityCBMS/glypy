@@ -89,15 +89,16 @@ class GlycanTests(unittest.TestCase):
 
     def test_traversal_by_name(self):
         structure = load("common_glycan")
-        structure[-
-                  1].add_monosaccharide(named_structures.monosaccharides['NeuGc'])
+        structure[-1].add_monosaccharide(
+            named_structures.monosaccharides['NeuGc'])
         structure.reindex(method='dfs')
         ref = structure.clone()
         self.assertEqual(structure, ref)
         structure.reindex(method='depth_first_traversal')
         self.assertEqual(structure, ref)
         self.assertRaises(
-            AttributeError, lambda: structure.reindex(method='not_real_traversal'))
+            KeyError, lambda: structure.reindex(
+                method='not_real_traversal'))
 
     def test_leaves(self):
         structure = load("common_glycan")
@@ -197,15 +198,16 @@ class GlycanTests(unittest.TestCase):
 
     def test_cyclic_clone(self):
         import warnings
-        warnings.simplefilter("default")
-        structure = load("cyclical_glycan")
-        self.assertEqual(structure, structure.clone())
+        warnings.simplefilter("error")
+        with self.assertRaises(UserWarning):
+            structure = load("cyclical_glycan")
+            self.assertEqual(structure, structure.clone())
 
     def test_subtree_from_fragment(self):
         structure = load("branchy_glycan")
         fragment = Fragment(mass=1463.5284494, kind="1,5A0,3X", included_nodes=set([2, 3, 4, 5, 6, 7, 8, 9, 10]),
                             link_ids={}, name="0,3Xc4-1,5A4",
-                            crossring_cleavages={2: ('1,5', 'A'), 7: ('0,3', 'X')})
+                            crossring_cleavages={3: ('1,5', 'A'), 10: ('0,3', 'X')})
         subtree = glycan.fragment_to_substructure(fragment, structure)
         self.assertAlmostEqual(subtree.mass(), fragment.mass)
 

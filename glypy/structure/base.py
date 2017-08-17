@@ -20,7 +20,12 @@ class SaccharideBase(MoleculeBase):
 
 
 class SaccharideCollection(SaccharideBase):
-    pass
+
+    def _derivatized(self, substituent, id_base):
+        pass
+
+    def _strip_derivatization(self):
+        pass
 
 
 class SubstituentBase(MoleculeBase):

@@ -9,11 +9,19 @@ import itertools
 from functools import partial
 from collections import deque, defaultdict, Callable
 
-from glypy.utils import identity, chrinc, uid
+from glypy.utils import (
+    identity,
+    chrinc,
+    uid,
+    make_struct)
 from glypy.composition import Composition
 
 from .base import SaccharideCollection
-from .monosaccharide import Monosaccharide, graph_clone, toggle as residue_toggle
+from .monosaccharide import (
+    Monosaccharide,
+    graph_clone,
+    toggle as residue_toggle,
+    MonosaccharideOccupancy)
 from .crossring_fragments import crossring_fragments, CrossRingPair
 from .fragment import Subtree
 
@@ -34,26 +42,10 @@ MAIN_BRANCH_SYM = '-'
 def fragment_to_substructure(fragment, tree):
     """Extract the substructure of `tree` which is contained in `fragment`
 
-
-    >>> from glypy import glycans as glycan_factory
-    >>> from glypy.structure import glycan
-    >>> n_linked_core = glycan_factory["N-Linked Core"]
-    >>> frag = n_linked_core.fragments().next()
-    >>> frag
-    <Fragment  mass=221.089937203 kind=Y included_nodes=set([1]) link_ids={1: ('', 'Y')} name=Y1 crossring_cleavages={} score=0.0 composition=Composition({'H': 15, 'C': 8, 'O': 6, 'N': 1})>
-    >>> glycan.fragment_to_substructure(frag, n_linked_core)
-    RES
-    1b:b-dglc-HEX-1:5
-    2s:n-acetyl
-    LIN
-    1:1d(2+1)2n
-    <BLANKLINE>
-    >>>
-
     Parameters
     ----------
-    fragment: Fragment
-        The :class:`Fragment` to extract substructure for.
+    fragment: GlycanFragment
+        The :class:`GlycanFragment` to extract substructure for.
     tree: Glycan
         The |Glycan| to extract substructure from.
 
@@ -171,6 +163,8 @@ class Glycan(SaccharideCollection):
         The order of traversal also defines the ordering of the |Monosaccharide|
         in :attr:`index` and |Link| in :attr:`link_index`.
 
+        Prior to constructing a |Glycan| instance, component |Monosaccharide| instances
+        may be labeled, converting their id field into a tuple.
         '''
         self.deindex()
         traversal = self._get_traversal_method(method)
@@ -185,9 +179,19 @@ class Glycan(SaccharideCollection):
             index.append(node)
 
         for node in index:
-            if node.id < 0:
-                node.id = i
-                i += 1
+            try:
+                if node.id < 0:
+                    node.id = i
+                    i += 1
+                    # reindex substituents as well
+                    for j, subst in node.substituents():
+                        subst.id = i
+                        i += 1
+            except TypeError:
+                if isinstance(node.id, tuple):
+                    # this node may be decorated from
+                    # another process
+                    continue
 
         link_index = []
         for pos, link in self.iterlinks(method=method):
@@ -229,6 +233,9 @@ class Glycan(SaccharideCollection):
             for node in self.index:
                 node.id += base
                 node.id *= -1
+                for j, subst in node.substituents():
+                    subst.id += base
+                    subst.id *= -1
             for link in self.link_index:
                 link.id += base
                 link.id *= -1
@@ -264,12 +271,6 @@ class Glycan(SaccharideCollection):
 
     def __tree__(self):
         return self
-
-    def _derivatized(self, substituent, id_base):
-        pass
-
-    def _strip_derivatization(self):
-        pass
 
     def get(self, ix):
         if self.index:
@@ -377,17 +378,12 @@ class Glycan(SaccharideCollection):
                 if terminal.id not in visited:
                     node_stack.append(terminal)
 
-    # Convenience aliases and the set up the traversal_methods entry
-    dfs = depth_first_traversal
-    traversal_methods['dfs'] = "dfs"
-    traversal_methods['depth_first_traversal'] = "dfs"
+    traversal_methods['dfs'] = "depth_first_traversal"
+    traversal_methods['depth_first_traversal'] = "depth_first_traversal"
 
     def breadth_first_traversal(self, from_node=None, apply_fn=identity, visited=None):
         '''
         Make a breadth-first traversal of the glycan graph. Children are explored in descending bond-order.
-
-        :meth:`~.bfs` is an alias of this method.
-        Both names can be used to specify this strategy to :meth:`~._get_traversal_method`.
 
         Parameters
         ----------
@@ -430,10 +426,8 @@ class Glycan(SaccharideCollection):
                 if terminal.id not in visited:
                     node_queue.append(terminal)
 
-    # Convenience aliases and the set up the traversal_methods entry
-    bfs = breadth_first_traversal
-    traversal_methods['bfs'] = "bfs"
-    traversal_methods['breadth_first_traversal'] = "bfs"
+    traversal_methods['bfs'] = "breadth_first_traversal"
+    traversal_methods['breadth_first_traversal'] = "breadth_first_traversal"
 
     def indexed_traversal(self, from_node=None, apply_fn=identity, visited=None):
         if not self.index:
@@ -465,19 +459,20 @@ class Glycan(SaccharideCollection):
 
     def _get_traversal_method(self, method):
         if method == 'dfs':
-            return self.dfs
+            return self.depth_first_traversal
         elif method == 'bfs':
-            return self.bfs
+            return self.breadth_first_traversal
         elif isinstance(method, Callable):
             return partial(method, self)
-        traversal = self.traversal_methods.get(method, None)
-        if traversal is None:
-            raise AttributeError("Unknown traversal method: {}".format(method))
+        try:
+            traversal = self.traversal_methods[method]
+        except KeyError:
+            raise KeyError("Unknown traversal method: {}".format(method))
         traversal = getattr(self, traversal)
         return traversal
 
     def __iter__(self):
-        return self.dfs()
+        return self.depth_first_traversal()
 
     def iternodes(self, from_node=None, apply_fn=identity, method='dfs', visited=None):
         '''
@@ -580,6 +575,93 @@ class Glycan(SaccharideCollection):
         return itertools.chain.from_iterable(
             traversal(apply_fn=is_leaf, visited=visited))
 
+    def ambiguous_links(self):
+        """Locate all links which are :class:`.AmbiguousLink` objects
+
+        Returns
+        -------
+        list
+            list of ambiguous links
+        """
+        ambiguous_links = []
+
+        # find all ambiguous links
+        for i, link in self.iterlinks():
+            if link.is_ambiguous():
+                ambiguous_links.append(link)
+        return ambiguous_links
+
+    def iterconfiguration(self):
+        ambiguous_links = self.ambiguous_links()
+
+        combos = itertools.product(*[
+            link.iterconfiguration() for link in ambiguous_links])
+
+        for configs in combos:
+            n_configs = len(configs)
+            has_ambiguous = []
+            for i, conf in enumerate(configs):
+                if conf[2] == -1 or conf[3] == -1:
+                    has_ambiguous.append(i)
+            if not has_ambiguous:
+                if len(set([(c[0], c[2]) for c in configs])) < n_configs:
+                    continue
+                yield tuple(zip(ambiguous_links, configs))
+            else:
+                # mask the ambiguous links so the possible attachment sites can
+                # be calculated
+                for link in ambiguous_links:
+                    link.break_link(refund=True)
+
+                parent_map = {
+                    parent.id: MonosaccharideOccupancy.build(parent)
+                    for parent, _, _, _ in configs
+                }
+
+                valid = True
+
+                # place all concrete links
+                for parent, child, parent_site, child_site in configs:
+                    parent_occupancy = parent_map[parent.id]
+                    if parent_site == -1:
+                        continue
+                    if parent_site not in parent_occupancy.open_sites:
+                        valid = False
+                        break
+                    # can't add more concrete links if the open sites are allocated
+                    # for unknown localizations
+                    elif len(parent_occupancy.open_sites) - parent_occupancy.unknown_sites <= 0:
+                        valid = False
+                        break
+                    else:
+                        # allocate the requested location so no new connections
+                        # can be made there
+                        ix = parent_occupancy.open_sites.index(parent_site)
+                        parent_occupancy.open_sites.pop(ix)
+                        parent_occupancy.occupied_sites.append(parent_site)
+                if valid:
+                    # place all unknown links
+                    for parent, child, parent_site, child_site in configs:
+                        parent_occupancy = parent_map[parent.id]
+                        if parent_site != -1:
+                            continue
+                        # can't add more unknown links if the open sites are allocated
+                        # for unknown localizations
+                        if len(parent_occupancy.open_sites) - parent_occupancy.unknown_sites <= 0:
+                            valid = False
+                            break
+                        else:
+                            parent_occupancy.unknown_sites += 1
+
+                # re-attach ambiguous links so the state of the glycan returns to
+                # its original state
+                for link in ambiguous_links:
+                    link.apply()
+
+                # if configuration is valid, yield it
+                if valid:
+                    yield tuple(zip(ambiguous_links, configs))
+
     def label_branches(self):
         '''
         Labels each branch point with an alphabetical symbol. Also computes and stores
@@ -600,7 +682,7 @@ class Glycan(SaccharideCollection):
             except IndexError:
                 return MAIN_BRANCH_SYM
 
-        for node in self.dfs():
+        for node in self.depth_first_traversal():
             links = []
             for link in node.links.values():
                 if link.is_child(node):
@@ -661,7 +743,7 @@ class Glycan(SaccharideCollection):
         int
         '''
         count = 0
-        for node in self.dfs():
+        for node in self.depth_first_traversal():
             count += 1
         return count
 
@@ -1068,7 +1150,7 @@ class Glycan(SaccharideCollection):
 
         Yields
         ------
-        :class:`Fragment`
+        :class:`GlycanFragment`
 
         See also
         --------

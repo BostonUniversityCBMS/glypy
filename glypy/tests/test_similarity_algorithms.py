@@ -1,4 +1,5 @@
 import unittest
+import operator
 
 import glypy
 from glypy.composition import composition_transform
@@ -16,7 +17,7 @@ class SimilarityTests(unittest.TestCase):
         self.assertEqual(similarity.monosaccharide_similarity(branchy.root, branchy.root), (5, 5))
         self.assertEqual(
             similarity.monosaccharide_similarity(branchy.root, branchy.root, include_children=True),
-            (26, 26))
+            (44, 44))
         self.assertEqual(similarity.monosaccharide_similarity(branchy.root, broad.root), (4, 5))
         self.assertEqual(
             similarity.monosaccharide_similarity(branchy.root, broad.root, include_children=True),
@@ -24,8 +25,45 @@ class SimilarityTests(unittest.TestCase):
         self.assertEqual(
             similarity.monosaccharide_similarity(broad.root, branchy.root, include_children=True),
             (11, 14))
-        self.assertEqual(similarity.monosaccharide_similarity(broad.root, broad.root, include_children=True), (54, 54))
+        self.assertEqual(similarity.monosaccharide_similarity(broad.root, broad.root, include_children=True), (63, 63))
         self.assertEqual(ref, broad)
+
+    def test_build_index_pairs(self):
+        nsc = similarity.NodeSimilarityComparator()
+        pairs = {(18, 15): (9, 9), (15, 15): (9, 9), (15, 18): (9, 9), (18, 18): (9, 9)}
+        expected = set([((18, 15), (15, 18)), ((18, 18), (15, 15))])
+        result = nsc.build_unique_index_pairs(pairs)
+        self.assertEqual(set(result), expected)
+
+    def test_optimal_assignment(self):
+        nsc = similarity.NodeSimilarityComparator()
+        pairs = {(18, 15): (9, 9), (15, 15): (9, 9), (15, 18): (9, 9), (18, 18): (9, 9)}
+        expected = set(((18, 15), (15, 18)))
+        result = nsc.optimal_assignment(pairs)
+        self.assertEqual(set(result), expected)
+
+    def test_partial_similarity(self):
+        broad = load("broad_n_glycan")
+        expected = [
+         (1, (63, 63)),
+         (3, (58, 58)),
+         (5, (53, 53)),
+         (6, (27, 27)),
+         (7, (14, 14)),
+         (9, (4, 4)),
+         (10, (5, 5)),
+         (11, (9, 9)),
+         (13, (4, 4)),
+         (14, (22, 22)),
+         (15, (9, 9)),
+         (17, (4, 4)),
+         (18, (9, 9)),
+         (20, (4, 4))
+        ]
+        result = list(map(lambda x: (
+            x[0].id, similarity.monosaccharide_similarity(
+                x[0], x[1], include_children=1)), zip(broad, broad)))
+        self.assertEqual(result, expected)
 
     def test_is_aminated(self):
         broad = load("broad_n_glycan")

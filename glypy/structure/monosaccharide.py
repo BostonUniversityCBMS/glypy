@@ -8,7 +8,12 @@ from collections import deque
 from six import string_types as basestring
 
 from glypy.io.format_constants_map import anomer_map, superclass_map
-from glypy.utils import invert_dict, identity as ident_op, cyclewarning, uid
+from glypy.utils import (
+    invert_dict,
+    identity as ident_op,
+    cyclewarning,
+    uid,
+    make_struct)
 from glypy.utils.multimap import OrderedMultiMap
 from glypy.utils.enum import EnumValue
 from glypy.composition import Composition, calculate_mass
@@ -89,7 +94,7 @@ def traverse(monosaccharide, visited=None, apply_fn=ident_op):
         visited = set()
     yield apply_fn(monosaccharide)
     visited.add(monosaccharide.id)
-    outnodes = sorted(list(monosaccharide.links.items()), key=lambda x: x[1][monosaccharide].order(), reverse=True)
+    outnodes = sorted(list(monosaccharide.links.items()), key=lambda x: x[1][monosaccharide].degree(), reverse=True)
     for link_pos, link in outnodes:
         child = link[monosaccharide]
         if child.id in visited:
@@ -121,7 +126,7 @@ def _traverse_debug(monosaccharide, visited=None, apply_fn=ident_op):  # pragma:
         visited = set()
     yield apply_fn(monosaccharide)
     visited.add(id(monosaccharide))
-    outnodes = sorted(list(monosaccharide.links.items()), key=lambda x: x[1][monosaccharide].order(), reverse=True)
+    outnodes = sorted(list(monosaccharide.links.items()), key=lambda x: x[1][monosaccharide].degree(), reverse=True)
     for link_pos, link in outnodes:
         child = link[monosaccharide]
         if id(child) in visited:
@@ -337,7 +342,7 @@ class Monosaccharide(SaccharideBase):
         if composition is None:
             composition = _get_standard_composition(self)
         self.composition = composition
-        self._order = len(self.links) + len(self.substituent_links)
+        self._degree = len(self.links) + len(self.substituent_links)
 
     @property
     def anomer(self):
@@ -511,7 +516,7 @@ class Monosaccharide(SaccharideBase):
         """Expedite adding a reducing end to this monosaccharide. Assumes
         that `value` is a :class:`ReducedEnd` and that this monosaccharide is not
         already reduced.
-        
+
         Parameters
         ----------
         value : ReducedEnd
@@ -541,7 +546,7 @@ class Monosaccharide(SaccharideBase):
         return self._remaining_capacity() >= 0
 
     def _remaining_capacity(self):
-        bonds = self.order(deep=True)
+        bonds = self.degree(deep=True)
         max_size = self.superclass.value - 1
         if self.ring_type == RingType.open:
             max_size += 1
@@ -575,17 +580,7 @@ class Monosaccharide(SaccharideBase):
         :class:`int`:
             The number of bound but unknown locations on the backbone.
         '''
-        slots = [0] * self.superclass.value
-        unknowns = 0
-        for pos, obj in chain(self.modifications.items(),
-                              self.links.items(),
-                              self.substituent_links.items()):
-            if obj == Modification.keto:
-                continue
-            if pos in {-1, 'x'}:  # pragma: no cover
-                unknowns += 1
-            else:
-                slots[pos - 1] += 1
+        slots, unknowns = self._backbone_occupancy_list()
 
         open_slots = []
         can_determine_positions = unknowns > 0 or (self.ring_end in [-1, 'x', None])
@@ -599,6 +594,38 @@ class Monosaccharide(SaccharideBase):
             open_slots.pop()
 
         return open_slots, unknowns
+
+    def _backbone_occupancy_list(self):
+        slots = [0] * self.superclass.value
+        unknowns = 0
+        for pos, obj in chain(self.modifications.items(),
+                              self.links.items(),
+                              self.substituent_links.items()):
+            if obj == Modification.keto:
+                continue
+            if pos in {-1, 'x'}:  # pragma: no cover
+                unknowns += 1
+            else:
+                slots[pos - 1] += 1
+        return slots, unknowns
+
+    def occupied_attachment_sites(self):
+        slots, unknowns = self._backbone_occupancy_list()
+        occupied_sites = []
+        for i, occupied in enumerate(slots, start=1):
+            if occupied:
+                occupied_sites.append(i)
+        if self.ring_end != -1:
+            occupied_sites.append(self.ring_end)
+        for i in range(unknowns):
+            occupied_sites.append(-1)
+        return occupied_sites
+
+    def total_attachement_sites(self):
+        slots = self.superclass.value
+        if self.ring_type != RingType.open:
+            slots -= 1
+        return slots
 
     def is_occupied(self, position):
         '''
@@ -992,12 +1019,14 @@ class Monosaccharide(SaccharideBase):
             for a_mod, b_mod in zip(self.modifications.items(), other.modifications.items()):
                 if a_mod != b_mod:  # pragma: no cover
                     return False
-            for a_child, b_child in zip(self.children(), other.children()):
-                if a_child[0] != b_child[0]:
+            for a_child, b_child in zip(self.children(True), other.children(True)):
+                a_parent_pos, a_link = a_child
+                b_parent_pos, b_link = b_child
+                if (a_parent_pos != b_parent_pos) or (a_link.child_position != b_link.child_position):
                     return False
-                if not a_child[1].exact_ordering_equality(b_child[1],
-                                                          substituents=substituents,
-                                                          visited=visited):  # pragma: no cover
+                if not a_link.child.exact_ordering_equality(b_link.child,
+                                                            substituents=substituents,
+                                                            visited=visited):  # pragma: no cover
                     return False
             return True
         return False
@@ -1019,11 +1048,13 @@ class Monosaccharide(SaccharideBase):
             return True
         if self._flat_equality(other) and (not substituents or self._match_substituents(other)):
             taken_b = set()
-            b_children = list(other.children())
-            a_children = list(self.children())
-            for a_pos, a_child in a_children:
+            b_children = list(other.children(links=True))
+            a_children = list(self.children(links=True))
+            for a_pos, a_link in a_children:
+                a_child = a_link.child
                 matched = False
-                for b_pos, b_child in b_children:
+                for b_pos, b_link in b_children:
+                    b_child = b_link.child
                     if (b_pos, b_child.id) in taken_b:
                         continue
                     if a_child.topological_equality(b_child,
@@ -1082,6 +1113,9 @@ class Monosaccharide(SaccharideBase):
             return False
         return self.exact_ordering_equality(other)
 
+    def __hash__(self):
+        return hash(self.id)
+
     def __ne__(self, other):
         return not (self == other)
 
@@ -1102,7 +1136,7 @@ class Monosaccharide(SaccharideBase):
         self.superclass = state['_superclass']
         self.stem = state['_stem']
         self.configuration = state['_configuration']
-        self._order = state.get("_order")
+        self._degree = state.get("_degree")
         self.ring_start = state['ring_start']
         self.ring_end = state['ring_end']
         self.id = state['id']
@@ -1112,8 +1146,8 @@ class Monosaccharide(SaccharideBase):
         self.substituent_links = state['substituent_links']
         self.composition = state["composition"]
         reduced = state.get('_reducing_end', None)
-        if self._order is None:
-            self._order = len(self.links) + len(self.substituent_links)
+        if self._degree is None:
+            self._degree = len(self.links) + len(self.substituent_links)
         # Make sure that if "aldi" is present, to replace it with
         # the default ReducedEnd
         if reduced is None:
@@ -1263,9 +1297,9 @@ class Monosaccharide(SaccharideBase):
             results.append((pos, subst))
         return results
 
-    def order(self, deep=False):
+    def degree(self, deep=False):
         '''
-        Return the "graph theory" order of this molecule
+        Return the "graph theory" degree of this molecule
 
         Returns
         -------
@@ -1273,16 +1307,15 @@ class Monosaccharide(SaccharideBase):
         '''
         if deep:
             res = len(self.links) + len(self.substituent_links)
-            if hasattr(self, "_order"):
-                assert res == self._order
-        return self._order
+            if hasattr(self, "_degree"):
+                assert res == self._degree
+        return self._degree
 
     def __iter__(self):
         return self.children()
 
 
 class ReducedEnd(object):
-    node_type = object()
     """Represents the composition shift and conformation change created
     by reducing a |Monosaccharide|.
 
@@ -1297,6 +1330,8 @@ class ReducedEnd(object):
 
     There is also a class attribute, :attr:`name` for comparison with :attr:`~.Modification.aldi`
     """
+
+    node_type = object()
     name = 'aldi'
 
     def __init__(self, composition=None, substituents=None, valence=1, id=None):
@@ -1309,7 +1344,7 @@ class ReducedEnd(object):
         self.links = substituents or OrderedMultiMap()
         self.valence = valence
         self.id = id or uid()
-        self._order = len(self.links)
+        self._degree = len(self.links)
 
     def is_occupied(self, position):
         '''
@@ -1533,4 +1568,18 @@ class ReducedEnd(object):
 
     def __setstate__(self, state):
         self.__dict__.update(state)
-        self._order = state.get("_order", len(self.links))
+        self._degree = state.get("_degree", len(self.links))
+
+
+MonosaccharideOccupancy = make_struct(
+    "MonosaccharideOccupancy", ["id", "open_sites", "unknown_sites", "occupied_sites"])
+
+
+def build_monosaccharide_occupancy(cls, monosaccharide):
+    open_sites, unknown_sites = monosaccharide.open_attachment_sites()
+    occupied_sites = monosaccharide.occupied_attachment_sites()
+    return cls(monosaccharide.id, open_sites, unknown_sites, occupied_sites)
+
+
+MonosaccharideOccupancy.build = classmethod(
+    build_monosaccharide_occupancy)
